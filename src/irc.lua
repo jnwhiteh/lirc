@@ -722,10 +722,11 @@ end
 ---
 -- Join a channel.
 -- @param channel Channel to join
-function join(channel)
+-- @param key The key for the channel (optional)
+function join(channel, key)
     if not channel then return end
     serverinfo.channels[channel] = Channel.new(channel)
-    send("JOIN", channel)
+    send("JOIN", channel, key)
 end
 -- }}}
 
