@@ -13,6 +13,7 @@ local socket =    require 'socket'
 local os =        require 'os'
 local string =    require 'string'
 local table =     require 'table'
+local math =      require 'math'
 -- }}}
 
 ---
@@ -48,6 +49,8 @@ local ctcp_handlers = {}
 local user_handlers = {}
 local serverinfo = {}
 local ip = nil
+local timer_length
+local timer_deadline = math.huge
 -- }}}
 
 -- defaults {{{
@@ -59,14 +62,30 @@ USERNAME = "LuaIRC"   -- default username
 REALNAME = "LuaIRC"   -- default realname
 DEBUG = false         -- whether we want extra debug information
 OUTFILE = nil         -- file to send debug output to - nil is stdout
+TIMER_LENGTH = 15     -- periodic timer length (seconds)
+-- }}}
+
+-- callback {{{
+local function callback(name, ...)
+    return misc._try_call(user_handlers[name], ...)
+end
 -- }}}
 
 -- private functions {{{
 -- main_loop_iter {{{
 local function main_loop_iter()
     if #rsockets == 0 and #wsockets == 0 then return false end
-    local rready, wready, err = socket.select(rsockets, wsockets)
-    if err then irc_debug._err(err); return false; end
+    local rready, wready, err = socket.select(rsockets, wsockets, 1.0)
+    if err and err ~= "timeout" then
+        irc_debug._err(err)
+        return false
+    end
+
+    local now = socket.gettime()
+    if now >= timer_deadline then
+        timer_deadline = now + timer_length - (now - timer_deadline)
+        callback("timer", now)
+    end
 
     for _, sock in base.ipairs(rready) do
         local cb = socket.protect(rcallbacks[sock])
@@ -106,13 +125,6 @@ local function incoming_message(sock)
                         (misc._parse_user(msg.from)), base.unpack(msg.args))
     return true
 end
--- }}}
-
--- callback {{{
-local function callback(name, ...)
-    return misc._try_call(user_handlers[name], ...)
-end
--- }}}
 -- }}}
 
 -- internal message handlers {{{
@@ -404,6 +416,7 @@ function handlers.on_rpl_endofmotd(from)
     if not serverinfo.connected then
         serverinfo.connected = true
         serverinfo.connecting = false
+        timer_deadline = socket.gettime() + timer_length
         callback("connect")
     end
 end
@@ -669,6 +682,9 @@ end
 --             <li><i>timeout:</i>  amount of time in seconds to wait before
 --                                  dropping an idle connection
 --                                  (default: '60')</li>
+--             <li><i>timer:</i>    number of seconds after which the "timer"
+--                                  callback should be triggered
+--                                  (default: '15')</li>
 --             </ul>
 function connect(args)
     local network = args.network or NETWORK
@@ -677,6 +693,7 @@ function connect(args)
     local username = args.username or USERNAME
     local realname = args.realname or REALNAME
     local timeout = args.timeout or TIMEOUT
+    timer_length = args.timer_length or TIMER_LENGTH
     serverinfo.connecting = true
     if OUTFILE then irc_debug.set_output(OUTFILE) end
     if DEBUG then irc_debug.enable() end
